@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+# Runtime data — the SQLite DB and generated audio are created locally
+# by the app; they aren't checked in so the repo stays clean and so a
+# Streamlit Cloud deploy starts from an empty DB rather than your data.
+data/*.db
+data/*.db-journal
+assets/audio/*.mp3
+
+.venv/
+venv/
+*.egg-info/
+.DS_Store
