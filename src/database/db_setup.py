@@ -1,13 +1,22 @@
 """
-Database setup.
+Database setup and connection management.
 
-Creates the SQLite database file (if missing) and the four core
-tables defined in the implementation plan's schema: words, cards,
-srs_reviews, study_logs. `initialize_database()` is safe to call on
-every app startup — it only creates tables that don't already exist.
+Backend is picked at startup:
+- Turso (cloud libSQL) when TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are
+  set (env vars or Streamlit secrets) — data survives Streamlit Cloud
+  restarts and is shared between your phone and computer.
+- Otherwise the local SQLite file at `data/language.db`.
+
+Turso speaks the same SQL dialect as SQLite, so the schema and queries
+are identical for both. Every round trip to Turso costs ~0.2s, so one
+connection is opened per process and reused (opening one costs ~0.6s),
+in autocommit mode to avoid a separate COMMIT round trip per write.
 """
 import os
 import sqlite3
+import threading
+from contextlib import contextmanager
+from typing import List, Optional
 
 import config
 
@@ -55,32 +64,130 @@ CREATE TABLE IF NOT EXISTS study_logs (
 """
 
 
-def get_connection() -> sqlite3.Connection:
-    """Open a connection to the app database.
+class Result:
+    """What a write returns: the affected-row count, the last inserted
+    id, and any rows from a RETURNING clause (as dicts)."""
 
-    Ensures the `data/` directory exists, enforces foreign keys, and
-    returns rows as `sqlite3.Row` so callers can access columns by
-    name (e.g. `row["word"]`).
-    """
-    os.makedirs(config.DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row
-    return conn
+    def __init__(self, rows: List[dict], rowcount: int, lastrowid: Optional[int]):
+        self.rows = rows
+        self.rowcount = rowcount
+        self.lastrowid = lastrowid
+
+
+def _rows_as_dicts(cursor) -> List[dict]:
+    # libsql has no row_factory, so build dicts from the column names
+    # (keeps the `row["word"]` style working for both backends).
+    if cursor.description is None:
+        return []
+    columns = [d[0] for d in cursor.description]
+    # libsql returns None rather than [] for statements like BEGIN.
+    return [dict(zip(columns, row)) for row in cursor.fetchall() or []]
+
+
+class Database:
+    """One shared connection, serialized with a lock because Streamlit
+    runs each browser session's script on its own thread."""
+
+    def __init__(self):
+        self.url = config.get_secret("TURSO_DATABASE_URL")
+        self.token = config.get_secret("TURSO_AUTH_TOKEN")
+        self.is_remote = bool(self.url and self.token)
+        self._conn = None
+        self._lock = threading.RLock()
+        self._in_transaction = False
+
+    def _connect(self):
+        if self.is_remote:
+            import libsql
+
+            return libsql.connect(self.url, auth_token=self.token, isolation_level=None)
+
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        conn = sqlite3.connect(config.DB_PATH, check_same_thread=False, isolation_level=None)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
+    def _run(self, fn):
+        """Run `fn(conn)`, reconnecting and retrying once if the
+        connection has gone stale (e.g. Turso dropped an idle stream)."""
+        with self._lock:
+            if self._conn is None:
+                self._conn = self._connect()
+            try:
+                return fn(self._conn)
+            except Exception:
+                # A fresh connection would silently fall outside any
+                # open transaction, so only retry standalone statements.
+                if not self.is_remote or self._in_transaction:
+                    raise
+                self._conn = self._connect()
+                return fn(self._conn)
+
+    def query(self, sql: str, params=()) -> List[dict]:
+        return self._run(lambda c: _rows_as_dicts(c.execute(sql, params)))
+
+    def query_one(self, sql: str, params=()) -> Optional[dict]:
+        rows = self.query(sql, params)
+        return rows[0] if rows else None
+
+    def execute(self, sql: str, params=()) -> Result:
+        def fn(c):
+            cursor = c.execute(sql, params)
+            rows = _rows_as_dicts(cursor)
+            return Result(rows, cursor.rowcount, cursor.lastrowid)
+
+        return self._run(fn)
+
+    def executescript(self, script: str) -> None:
+        self._run(lambda c: c.executescript(script))
+
+    @contextmanager
+    def transaction(self):
+        """Group several writes so they all land or none do. Holds the
+        lock throughout so no other session interleaves statements."""
+        with self._lock:
+            self.execute("BEGIN")
+            self._in_transaction = True
+            try:
+                yield self
+                self.execute("COMMIT")
+            except Exception:
+                try:
+                    self.execute("ROLLBACK")
+                except Exception:
+                    pass  # connection is gone; the server discards the transaction
+                raise
+            finally:
+                self._in_transaction = False
+
+
+_db: Optional[Database] = None
+_db_lock = threading.Lock()
+_initialized = False
+
+
+def get_db() -> Database:
+    """Return the process-wide Database, creating it on first use."""
+    global _db
+    with _db_lock:
+        if _db is None:
+            _db = Database()
+        return _db
 
 
 def initialize_database() -> None:
-    """Create all four tables if they don't already exist."""
-    conn = get_connection()
-    try:
-        conn.executescript(SCHEMA)
-        conn.commit()
-    finally:
-        conn.close()
+    """Create all four tables if they don't already exist. Runs once
+    per process — Streamlit calls this on every rerun, and re-running
+    the schema against Turso would cost a round trip each time."""
+    global _initialized
+    if _initialized:
+        return
+    get_db().executescript(SCHEMA)
+    _initialized = True
 
 
 if __name__ == "__main__":
-    # Allows manual setup via: python -m src.database.db_setup
-    # (run as a module from the project root so `import config` resolves)
+    # Manual setup: python -m src.database.db_setup (from the project root)
     initialize_database()
-    print(f"Database initialized at: {config.DB_PATH}")
+    db = get_db()
+    print("Database initialized:", "Turso" if db.is_remote else config.DB_PATH)

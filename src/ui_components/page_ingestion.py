@@ -16,7 +16,8 @@ import streamlit as st
 import config
 from src.core.cloze_maker import build_chinese_card, build_korean_card
 from src.core.nlp_processor import filter_new_words, tokenize_chinese_text
-from src.database.queries import add_card, add_word, init_srs_review
+from src.database.queries import save_words_with_cards
+from src.utils.time_utils import local_today
 
 
 def _clean(value) -> str:
@@ -27,31 +28,33 @@ def _clean(value) -> str:
     return str(value).strip()
 
 
-def _save_word_and_card(language, word, pronunciation, meaning, domain, source_text=""):
-    """Add a word, build its card (cloze for Chinese / basic for
-    Korean), and initialize its SRS state.
+def _flash(message: str):
+    """Queue a success message to show after the next st.rerun() —
+    anything rendered before a rerun is wiped."""
+    st.session_state["ingestion_flash"] = message
 
-    Returns True if the word was newly added, False if it was a
-    duplicate for this language (nothing is created in that case).
+
+def _save(language: str, entries: list, source_text: str = "") -> str:
+    """Build a card for each entry (cloze for Chinese, basic for
+    Korean), save them all in one go, and return a summary message.
+
+    Each entry is a dict with word, pronunciation, meaning, domain.
     """
-    word_id = add_word(language, word, pronunciation, meaning, domain)
-    if not word_id:
-        return False
+    items = []
+    for e in entries:
+        if language == "Chinese":
+            card = build_chinese_card(e["word"], source_text)
+        else:
+            card = build_korean_card(e["word"], e["meaning"])
+        items.append({**e, **card, "source_article": source_text})
 
-    if language == "Chinese":
-        card_fields = build_chinese_card(word, source_text)
-    else:
-        card_fields = build_korean_card(word, meaning)
+    with st.spinner("Saving..."):
+        added, skipped = save_words_with_cards(language, items, local_today().isoformat())
 
-    card_id = add_card(
-        word_id,
-        card_fields["sentence_text"],
-        card_fields["cloze_text"],
-        translation=meaning,
-        source_article=source_text,
-    )
-    init_srs_review(card_id)
-    return True
+    msg = f"Saved {added} word(s)."
+    if skipped:
+        msg += f" Skipped {skipped} already in your vocabulary."
+    return msg
 
 
 def _render_chinese(language: str):
@@ -85,19 +88,12 @@ def _render_chinese(language: str):
         )
 
         if st.button("Save to Vocabulary", type="primary"):
-            source_text = st.session_state.get("cn_source_text_saved", "")
-            added, skipped = 0, 0
-            for _, row in edited.iterrows():
-                word = _clean(row["word"])
-                if not row["include"] or not word:
-                    continue
-                ok = _save_word_and_card(language, word, "", _clean(row["meaning"]), domain, source_text)
-                added += 1 if ok else 0
-                skipped += 0 if ok else 1
-            msg = f"Saved {added} word(s) with context cards."
-            if skipped:
-                msg += f" Skipped {skipped} duplicate(s)."
-            st.success(msg)
+            entries = [
+                {"word": _clean(row["word"]), "pronunciation": "", "meaning": _clean(row["meaning"]), "domain": domain}
+                for _, row in edited.iterrows()
+                if row["include"] and _clean(row["word"])
+            ]
+            _flash(_save(language, entries, st.session_state.get("cn_source_text_saved", "")))
             st.session_state.pop("cn_candidates", None)
             st.session_state.pop("cn_source_text_saved", None)
             st.rerun()
@@ -121,8 +117,8 @@ def _render_korean(language: str):
                 if not word.strip():
                     st.error("Word is required.")
                 else:
-                    ok = _save_word_and_card(language, word, romanization, meaning, domain)
-                    st.success(f"Added '{word}'.") if ok else st.warning(f"'{word}' already exists.")
+                    entry = {"word": word.strip(), "pronunciation": romanization, "meaning": meaning, "domain": domain}
+                    st.success(_save(language, [entry]))
 
     with tab_csv:
         st.caption("Recognized columns (case-insensitive): word, romanization/pronunciation, meaning, domain.")
@@ -146,25 +142,25 @@ def _render_korean(language: str):
             )
 
             if st.button("Import CSV", type="primary"):
-                added, skipped = 0, 0
-                for _, row in df.iterrows():
-                    word = _clean(row.get("word"))
-                    if not word:
-                        continue
-                    pron = _clean(row.get("romanization")) or _clean(row.get("pronunciation"))
-                    meaning = _clean(row.get("meaning"))
-                    row_domain = _clean(row.get("domain")) or default_domain
-                    ok = _save_word_and_card(language, word, pron, meaning, row_domain)
-                    added += 1 if ok else 0
-                    skipped += 0 if ok else 1
-                msg = f"Imported {added} word(s)."
-                if skipped:
-                    msg += f" Skipped {skipped} duplicate(s)."
-                st.success(msg)
+                entries = [
+                    {
+                        "word": _clean(row.get("word")),
+                        "pronunciation": _clean(row.get("romanization")) or _clean(row.get("pronunciation")),
+                        "meaning": _clean(row.get("meaning")),
+                        "domain": _clean(row.get("domain")) or default_domain,
+                    }
+                    for _, row in df.iterrows()
+                    if _clean(row.get("word"))
+                ]
+                st.success(_save(language, entries))
 
 
 def render(language: str):
     st.subheader("📥 Add Vocabulary")
+    flash = st.session_state.pop("ingestion_flash", None)
+    if flash:
+        st.success(flash)
+
     if language == "Chinese":
         _render_chinese(language)
     else:

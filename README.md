@@ -17,13 +17,25 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The SQLite database (`data/language.db`) and generated audio
-(`assets/audio/*.mp3`) are created automatically on first run.
+With no configuration, data goes to a local SQLite file (`data/language.db`).
 
-## ⚠️ Deploying to Streamlit Community Cloud
-Community Cloud's filesystem is **ephemeral** — it resets on every
-app restart (redeploy, waking from sleep, host maintenance). That
-means `data/language.db` and any generated audio get wiped back to
-whatever's in the git repo (i.e. empty) on restart. Fine for a demo;
-**not** a reliable place to keep real study progress. Use a local run
-(`streamlit run app.py`) for actual day-to-day studying.
+## Cloud database + password (use it from your phone)
+Create `.streamlit/secrets.toml` (gitignored — never commit it):
+
+```toml
+TURSO_DATABASE_URL = "libsql://<your-db>.turso.io"
+TURSO_AUTH_TOKEN = "<token from `turso db tokens create <db>`>"
+APP_PASSWORD = "<anything you like>"
+```
+
+- With the two `TURSO_*` keys set, the app stores everything in [Turso](https://turso.tech)
+  (hosted SQLite, free tier), so your computer and phone share the same vocabulary and progress.
+- With `APP_PASSWORD` set, the app asks for it before showing anything.
+
+## Deploying to Streamlit Community Cloud
+1. Deploy `app.py` from this repo at [share.streamlit.io](https://share.streamlit.io).
+2. In the app's **Settings → Secrets**, paste the same three keys as `secrets.toml`.
+
+Without the Turso keys, a Streamlit Cloud deploy falls back to local SQLite, which is
+wiped whenever the app restarts. Generated audio lives on local disk either way; it's just
+regenerated when needed.

@@ -28,3 +28,20 @@ This tracker aligns with the 5 phases defined in `implementation_plan.md`. Use t
   - [x] Update session logging in `study_logs` with language tags.
   - [x] Build `src/ui_components/page_dashboard.py` (Plotly charts filtered by language).
   - [x] Visualize Cards Reviewed per Day, Vocabulary by Domain, Total Known Words.
+
+- [x] **Cloud & Accuracy Fixes**
+  - [x] Turso cloud database (falls back to local SQLite when unconfigured).
+  - [x] Password gate via `APP_PASSWORD`.
+  - [x] "Again" grade that resets a forgotten card and re-queues it in the session.
+  - [x] Words auto-promote to Learning / Known (Known at a 21+ day interval).
+  - [x] Reviews logged per grade, so partial sessions count on the dashboard.
+  - [x] Due dates use local time (UTC+8), not UTC.
+  - [x] Study reloads due cards when opened; "Saved N words" message survives the rerun.
+
+- [ ] **Next: Features**
+  - [ ] Auto-fill pinyin (`pypinyin`) and meanings (CC-CEDICT) for Chinese.
+  - [ ] Stop-word / single-character filter for tokenized words.
+  - [ ] Daily new-card limit.
+  - [ ] Vocabulary page: search, edit, delete.
+  - [ ] CSV export / backup.
+  - [ ] Study streak metric.

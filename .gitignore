@@ -12,3 +12,6 @@ assets/audio/*.mp3
 venv/
 *.egg-info/
 .DS_Store
+
+# Local secrets (Turso credentials, app password) — never commit
+.streamlit/secrets.toml

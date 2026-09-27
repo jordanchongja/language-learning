@@ -39,3 +39,35 @@ DEFAULT_DOMAINS = {
 # Word lifecycle
 # ---------------------------------------------------------------------------
 WORD_STATUSES = ["New", "Learning", "Known"]
+
+# A word becomes 'Known' once its card's SRS interval reaches this many
+# days (i.e. you've recalled it successfully several times in a row).
+KNOWN_INTERVAL_DAYS = 21
+
+# ---------------------------------------------------------------------------
+# Time
+# ---------------------------------------------------------------------------
+# "Today" for due dates and study logs is computed in this UTC offset,
+# so the day rolls over at local midnight rather than UTC midnight
+# (Streamlit Cloud servers run on UTC).
+UTC_OFFSET_HOURS = 8
+
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+def get_secret(name: str) -> str:
+    """Look up a secret from the environment, then Streamlit secrets
+    (`.streamlit/secrets.toml` locally, the Secrets panel on Streamlit
+    Cloud). Returns "" if it isn't set anywhere."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get(name, "") or "")
+    except Exception:
+        # No secrets.toml at all — Streamlit raises rather than
+        # returning empty.
+        return ""

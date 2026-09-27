@@ -1,19 +1,46 @@
 """
-Main Streamlit entry point: global sidebar + page router.
+Main Streamlit entry point: password gate, global sidebar, page router.
 
-Initializes the SQLite database on every startup, renders the global
-sidebar (Active Environment toggle + page navigation), and routes to
-the Ingestion / Study / Dashboard pages.
+If APP_PASSWORD is set (Streamlit secrets or env var), the app asks
+for it before showing anything or touching the database. Then it
+initializes the database, renders the global sidebar (Active
+Environment toggle + page navigation), and routes to the Ingestion /
+Study / Dashboard pages.
 """
+import hmac
+
 import streamlit as st
 
 import config
-from src.database.db_setup import initialize_database
+from src.database.db_setup import get_db, initialize_database
 from src.ui_components import page_dashboard, page_ingestion, page_quiz
 
 st.set_page_config(page_title="Language Learning Studio", page_icon="🗣️", layout="wide")
 
-# Safe to call on every run — only creates tables that don't exist yet.
+
+def _password_ok() -> bool:
+    """Show a password prompt until the right password is entered.
+    With no APP_PASSWORD configured (e.g. a plain local run), there's
+    no gate. Unlocking lasts for this browser session."""
+    expected = config.get_secret("APP_PASSWORD")
+    if not expected or st.session_state.get("authenticated"):
+        return True
+
+    st.title("🔒 Language Learning Studio")
+    with st.form("login"):
+        password = st.text_input("Password", type="password")
+        if st.form_submit_button("Unlock", type="primary"):
+            if hmac.compare_digest(password.encode(), expected.encode()):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            st.error("Incorrect password.")
+    return False
+
+
+if not _password_ok():
+    st.stop()
+
+# Runs the schema once per process; a no-op on later reruns.
 initialize_database()
 
 # ---------------------------------------------------------------------------
@@ -37,8 +64,14 @@ page = st.sidebar.radio(
     key="active_page",
 )
 
+# Coming back to Study should pick up words added since the queue was
+# last loaded, so drop the cached queue whenever the page changes.
+if st.session_state.get("_prev_page") != page:
+    st.session_state.pop("quiz_language", None)
+st.session_state["_prev_page"] = page
+
 st.sidebar.divider()
-st.sidebar.caption(f"Database: `{config.DB_PATH}`")
+st.sidebar.caption("☁️ Turso cloud database" if get_db().is_remote else f"💾 Local database: `{config.DB_PATH}`")
 
 # ---------------------------------------------------------------------------
 # Main area — route to the active page
