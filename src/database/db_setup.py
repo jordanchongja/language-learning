@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS srs_reviews (
     interval_days INTEGER DEFAULT 0,
     next_review_date DATE DEFAULT CURRENT_DATE,
     last_review_date DATE,
+    first_review_date DATE,        -- when the card was first studied (daily new-card limit)
     FOREIGN KEY (card_id) REFERENCES cards(id)
 );
 
@@ -61,7 +62,18 @@ CREATE TABLE IF NOT EXISTS study_logs (
     correct_count INTEGER DEFAULT 0,
     session_duration_seconds INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS
+# won't add them to an existing table, so they're added here.
+_ADDED_COLUMNS = [
+    ("srs_reviews", "first_review_date", "DATE"),
+]
 
 
 class Result:
@@ -176,13 +188,18 @@ def get_db() -> Database:
 
 
 def initialize_database() -> None:
-    """Create all four tables if they don't already exist. Runs once
+    """Create any missing tables/columns. Runs once
     per process — Streamlit calls this on every rerun, and re-running
     the schema against Turso would cost a round trip each time."""
     global _initialized
     if _initialized:
         return
-    get_db().executescript(SCHEMA)
+    db = get_db()
+    db.executescript(SCHEMA)
+    for table, column, col_type in _ADDED_COLUMNS:
+        existing = {row["name"] for row in db.query(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     _initialized = True
 
 

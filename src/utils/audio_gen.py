@@ -6,10 +6,11 @@ failure (offline, blocked, gTTS error) we return None instead of
 raising, and callers (the quiz UI) simply skip audio playback rather
 than crash the session.
 
-Files are named deterministically from the card id
-(`assets/audio/<card_id>.mp3`) so callers can check for an existing
-file with `audio_path_for_card()` before generating it.
+Files are cached in `assets/audio/`, named by a hash of the language
+and text, so a word or sentence is only fetched once per server. On
+Streamlit Cloud the cache is wiped on restart and simply refills.
 """
+import hashlib
 import os
 from typing import Optional
 
@@ -23,27 +24,30 @@ _LANG_CODES = {
 }
 
 
-def audio_path_for_card(card_id: int) -> str:
-    """Path where `card_id`'s pronunciation audio is/would be stored."""
-    return os.path.join(config.AUDIO_DIR, f"{card_id}.mp3")
+def audio_path(text: str, language: str) -> str:
+    """Path where the audio for `text` is/would be cached."""
+    digest = hashlib.sha1(f"{language}:{text}".encode("utf-8")).hexdigest()[:16]
+    return os.path.join(config.AUDIO_DIR, f"{digest}.mp3")
 
 
-def generate_audio(card_id: int, text: str, language: str) -> Optional[str]:
-    """Generate and save pronunciation audio for `text` in `language`.
-
-    Returns the saved file path on success, or None if generation
-    failed or `language` isn't supported for TTS — the caller should
-    treat audio as optional either way.
-    """
+def generate_audio(text: str, language: str) -> Optional[str]:
+    """Return a path to pronunciation audio for `text`, generating it
+    on first use. None if generation failed or `language` isn't
+    supported — callers should treat audio as optional."""
     text = (text or "").strip()
     lang_code = _LANG_CODES.get(language)
     if not text or not lang_code:
         return None
 
+    path = audio_path(text, language)
+    if os.path.exists(path):
+        return path
+
     os.makedirs(config.AUDIO_DIR, exist_ok=True)
-    path = audio_path_for_card(card_id)
     try:
         gTTS(text=text, lang=lang_code).save(path)
         return path
     except Exception:
+        if os.path.exists(path):
+            os.remove(path)  # don't leave a partial file that looks cached
         return None

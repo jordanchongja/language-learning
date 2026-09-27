@@ -1,23 +1,62 @@
 """
-Analytics dashboard — Plotly charts filtered by the active language.
+Analytics dashboard — metrics and Plotly charts filtered by the active
+language.
 """
-from datetime import timedelta
+from datetime import date, timedelta
+from typing import List
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from src.database.queries import get_daily_review_counts, get_known_word_count, get_word_counts_by_domain
+from src.database.queries import (
+    count_new_cards_started,
+    get_daily_review_counts,
+    get_due_cards,
+    get_known_word_count,
+    get_new_card_limit,
+    get_study_dates,
+    get_word_counts_by_domain,
+)
 from src.utils.time_utils import local_today
+
+
+def current_streak(study_dates: List[str], today: date) -> int:
+    """Consecutive days with reviews, ending today — or yesterday, so
+    the streak isn't shown as broken before you've studied today."""
+    days = {date.fromisoformat(d) for d in study_dates}
+    day = today if today in days else today - timedelta(days=1)
+    streak = 0
+    while day in days:
+        streak += 1
+        day -= timedelta(days=1)
+    return streak
+
+
+def due_today_count(language: str, today: date) -> int:
+    """Reviews due plus new cards still allowed today."""
+    t = today.isoformat()
+    remaining_new = max(0, get_new_card_limit(language) - count_new_cards_started(language, t))
+    return len(get_due_cards(language, t, remaining_new))
 
 
 def render(language: str):
     st.subheader("📊 Progress Dashboard")
+    today = local_today()
 
-    st.metric("Known Words", get_known_word_count(language))
+    domain_rows = get_word_counts_by_domain(language)
+    total_words = sum(r["word_count"] for r in domain_rows)
+    streak = current_streak(get_study_dates(language), today)
+
+    m1, m2 = st.columns(2)
+    m1.metric("🔥 Streak", f"{streak} day{'s' if streak != 1 else ''}")
+    m2.metric("📚 Due today", due_today_count(language, today))
+    m3, m4 = st.columns(2)
+    m3.metric("✅ Known words", get_known_word_count(language))
+    m4.metric("📖 Total words", total_words)
 
     st.markdown("#### Cards Reviewed per Day (last 30 days)")
-    since = (local_today() - timedelta(days=29)).isoformat()
+    since = (today - timedelta(days=29)).isoformat()
     daily_rows = get_daily_review_counts(language, since)
     if daily_rows:
         df = pd.DataFrame(daily_rows)
@@ -29,10 +68,8 @@ def render(language: str):
         st.info("No reviews logged yet — grade some cards in Study to see your trend here.")
 
     st.markdown("#### Vocabulary by Domain")
-    domain_rows = get_word_counts_by_domain(language)
     if domain_rows:
-        df = pd.DataFrame(domain_rows)
-        fig = px.pie(df, names="domain", values="word_count")
+        fig = px.pie(pd.DataFrame(domain_rows), names="domain", values="word_count")
         st.plotly_chart(fig, width="stretch")
     else:
-        st.info("No vocabulary yet — add some words in Ingestion to see the domain breakdown here.")
+        st.info("No vocabulary yet — add some words to see the domain breakdown here.")

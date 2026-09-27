@@ -38,10 +38,14 @@ This tracker aligns with the 5 phases defined in `implementation_plan.md`. Use t
   - [x] Due dates use local time (UTC+8), not UTC.
   - [x] Study reloads due cards when opened; "Saved N words" message survives the rerun.
 
-- [ ] **Next: Features**
-  - [ ] Auto-fill pinyin (`pypinyin`) and meanings (CC-CEDICT) for Chinese.
-  - [ ] Stop-word / single-character filter for tokenized words.
-  - [ ] Daily new-card limit.
-  - [ ] Vocabulary page: search, edit, delete.
-  - [ ] CSV export / backup.
-  - [ ] Study streak metric.
+- [x] **Features**
+  - [x] Overview page: today's due cards per language + how-to guide.
+  - [x] Auto-fill pinyin (`pypinyin`) and meanings (CC-CEDICT) for Chinese.
+  - [x] Auto-fill romanization for Korean (`korean-romanizer`).
+  - [x] Stop-word / single-character filter for tokenized words.
+  - [x] Daily new-card limit (per language, saved in a `settings` table).
+  - [x] Vocabulary page: search, filter, edit, delete, fill missing pinyin/meanings.
+  - [x] CSV export + full backup (.zip).
+  - [x] Study streak, due-today, and total-word metrics.
+  - [x] Sentence audio; audio cache keyed by text.
+  - [x] Google sign-in (`st.login`) restricted to `ALLOWED_EMAILS`.

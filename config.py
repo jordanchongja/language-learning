@@ -44,6 +44,11 @@ WORD_STATUSES = ["New", "Learning", "Known"]
 # days (i.e. you've recalled it successfully several times in a row).
 KNOWN_INTERVAL_DAYS = 21
 
+# Default cap on never-studied cards introduced per day, per language
+# (changeable from the Study page). Keeps a big article import from
+# landing all at once.
+NEW_CARDS_PER_DAY = 20
+
 # ---------------------------------------------------------------------------
 # Time
 # ---------------------------------------------------------------------------

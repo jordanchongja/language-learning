@@ -2,20 +2,21 @@
 Content ingestion UI — adapts to the active language.
 
 Chinese: paste an article, tokenize it with jieba, review the new
-candidate words, then save. Saving builds a context cloze card for
-each word from the pasted article and initializes its SRS state, so
-it's immediately reviewable in Study.
+candidate words (pinyin and meanings pre-filled offline, filler words
+filtered out), then save. Saving builds a context cloze card for each
+word from the pasted article and initializes its SRS state.
 
-Korean: manual single-word entry or bulk CSV upload. There's no
-source article, so each word gets a basic front/back card instead of
-a cloze.
+Korean: manual single-word entry or bulk CSV upload, with romanization
+filled in automatically when left blank. There's no source article, so
+each word gets a basic front/back card instead of a cloze.
 """
 import pandas as pd
 import streamlit as st
 
 import config
 from src.core.cloze_maker import build_chinese_card, build_korean_card
-from src.core.nlp_processor import filter_new_words, tokenize_chinese_text
+from src.core.dictionary import chinese_meaning, chinese_pinyin, korean_romanization
+from src.core.nlp_processor import apply_filters, filter_new_words, tokenize_chinese_text
 from src.database.queries import save_words_with_cards
 from src.utils.time_utils import local_today
 
@@ -51,7 +52,7 @@ def _save(language: str, entries: list, source_text: str = "") -> str:
     with st.spinner("Saving..."):
         added, skipped = save_words_with_cards(language, items, local_today().isoformat())
 
-    msg = f"Saved {added} word(s)."
+    msg = f"Saved {added} word(s) — they're ready in Study."
     if skipped:
         msg += f" Skipped {skipped} already in your vocabulary."
     return msg
@@ -60,45 +61,81 @@ def _save(language: str, entries: list, source_text: str = "") -> str:
 def _render_chinese(language: str):
     st.subheader("🇨🇳 Paste Chinese Text")
     st.caption(
-        "Paste an article or passage. It's tokenized with jieba so you can pick which words "
-        "to add — each saved word gets a cloze card built from this text."
+        "Paste an article or passage. It's split into words so you can pick which to learn — "
+        "each saved word gets a fill-in-the-blank card built from its sentence in this text."
     )
 
     domain = st.selectbox("Domain for this batch", options=config.DEFAULT_DOMAINS[language], key="cn_domain")
     text = st.text_area("Source text", height=200, key="cn_source_text")
 
-    if st.button("Tokenize"):
-        candidates = tokenize_chinese_text(text)
-        st.session_state["cn_candidates"] = filter_new_words(language, candidates)
-        st.session_state["cn_source_text_saved"] = text
-
-    candidates = st.session_state.get("cn_candidates", [])
-    if candidates:
-        st.write(f"Found **{len(candidates)}** new word(s) not already in your vocabulary:")
-        table = pd.DataFrame({"include": True, "word": candidates, "meaning": ""})
-        edited = st.data_editor(
-            table,
-            column_config={
-                "include": st.column_config.CheckboxColumn("Add?"),
-                "word": st.column_config.TextColumn("Word", disabled=True),
-                "meaning": st.column_config.TextColumn("Meaning (optional)"),
-            },
-            hide_index=True,
-            key="cn_editor",
-        )
-
-        if st.button("Save to Vocabulary", type="primary"):
-            entries = [
-                {"word": _clean(row["word"]), "pronunciation": "", "meaning": _clean(row["meaning"]), "domain": domain}
-                for _, row in edited.iterrows()
-                if row["include"] and _clean(row["word"])
+    if st.button("Find new words"):
+        with st.spinner("Looking up words..."):
+            words = filter_new_words(language, tokenize_chinese_text(text))
+            # Look up pinyin/meanings once here rather than on every rerun.
+            st.session_state["cn_candidates"] = [
+                {"word": w, "pinyin": chinese_pinyin(w), "meaning": chinese_meaning(w)} for w in words
             ]
-            _flash(_save(language, entries, st.session_state.get("cn_source_text_saved", "")))
-            st.session_state.pop("cn_candidates", None)
-            st.session_state.pop("cn_source_text_saved", None)
-            st.rerun()
-    elif "cn_candidates" in st.session_state:
+        st.session_state["cn_source_text_saved"] = text
+        st.session_state["cn_batch"] = st.session_state.get("cn_batch", 0) + 1
+
+    if "cn_candidates" not in st.session_state:
+        return
+    candidates = st.session_state["cn_candidates"]
+    if not candidates:
         st.info("No new words found — everything in that text is already in your vocabulary.")
+        return
+
+    c1, c2 = st.columns(2)
+    skip_single = c1.toggle("Hide single-character words", value=True, key="cn_skip_single")
+    skip_stop = c2.toggle("Hide common filler words (的, 我们, 因为…)", value=True, key="cn_skip_stop")
+    kept_words, hidden = apply_filters([c["word"] for c in candidates], skip_single, skip_stop)
+    kept = [c for c in candidates if c["word"] in set(kept_words)]
+
+    st.write(
+        f"**{len(kept)}** new word(s) to review"
+        + (f" ({hidden} hidden by filters)" if hidden else "")
+        + ". Untick any you don't want, and edit pinyin/meanings if needed."
+    )
+    if not kept:
+        return
+
+    table = pd.DataFrame(
+        {
+            "include": True,
+            "word": [c["word"] for c in kept],
+            "pinyin": [c["pinyin"] for c in kept],
+            "meaning": [c["meaning"] for c in kept],
+        }
+    )
+    edited = st.data_editor(
+        table,
+        column_config={
+            "include": st.column_config.CheckboxColumn("Add?", width="small"),
+            "word": st.column_config.TextColumn("Word", disabled=True),
+            "pinyin": st.column_config.TextColumn("Pinyin"),
+            "meaning": st.column_config.TextColumn("Meaning", width="large"),
+        },
+        hide_index=True,
+        # Filters change the rows, so give the editor a fresh key to
+        # stop edits from sticking to the wrong row.
+        key=f"cn_editor_{st.session_state['cn_batch']}_{skip_single}_{skip_stop}",
+    )
+
+    if st.button("Save to Vocabulary", type="primary"):
+        entries = [
+            {
+                "word": _clean(row["word"]),
+                "pronunciation": _clean(row["pinyin"]),
+                "meaning": _clean(row["meaning"]),
+                "domain": domain,
+            }
+            for _, row in edited.iterrows()
+            if row["include"] and _clean(row["word"])
+        ]
+        _flash(_save(language, entries, st.session_state.get("cn_source_text_saved", "")))
+        for key in ("cn_candidates", "cn_source_text_saved"):
+            st.session_state.pop(key, None)
+        st.rerun()
 
 
 def _render_korean(language: str):
@@ -106,22 +143,32 @@ def _render_korean(language: str):
 
     with tab_manual:
         with st.form("korean_manual_form", clear_on_submit=True):
-            cols = st.columns(4)
-            word = cols[0].text_input("Word")
-            romanization = cols[1].text_input("Romanization")
-            meaning = cols[2].text_input("Meaning")
-            domain = cols[3].selectbox("Domain", options=config.DEFAULT_DOMAINS[language])
+            # 2×2 rather than 4 across, so it stays usable on a phone.
+            r1c1, r1c2 = st.columns(2)
+            word = r1c1.text_input("Word")
+            meaning = r1c2.text_input("Meaning")
+            r2c1, r2c2 = st.columns(2)
+            romanization = r2c1.text_input("Romanization", placeholder="Leave blank to auto-fill")
+            domain = r2c2.selectbox("Domain", options=config.DEFAULT_DOMAINS[language])
             submitted = st.form_submit_button("Add Word", type="primary")
 
             if submitted:
                 if not word.strip():
                     st.error("Word is required.")
                 else:
-                    entry = {"word": word.strip(), "pronunciation": romanization, "meaning": meaning, "domain": domain}
+                    entry = {
+                        "word": word.strip(),
+                        "pronunciation": romanization.strip() or korean_romanization(word.strip()),
+                        "meaning": meaning,
+                        "domain": domain,
+                    }
                     st.success(_save(language, [entry]))
 
     with tab_csv:
-        st.caption("Recognized columns (case-insensitive): word, romanization/pronunciation, meaning, domain.")
+        st.caption(
+            "Columns (case-insensitive): **word** (required), meaning, romanization/pronunciation, domain. "
+            "Blank romanizations are filled in automatically."
+        )
         uploaded = st.file_uploader("Upload CSV", type=["csv"])
         if uploaded is not None:
             try:
@@ -142,21 +189,25 @@ def _render_korean(language: str):
             )
 
             if st.button("Import CSV", type="primary"):
-                entries = [
-                    {
-                        "word": _clean(row.get("word")),
-                        "pronunciation": _clean(row.get("romanization")) or _clean(row.get("pronunciation")),
-                        "meaning": _clean(row.get("meaning")),
-                        "domain": _clean(row.get("domain")) or default_domain,
-                    }
-                    for _, row in df.iterrows()
-                    if _clean(row.get("word"))
-                ]
+                entries = []
+                for _, row in df.iterrows():
+                    word = _clean(row.get("word"))
+                    if not word:
+                        continue
+                    pron = _clean(row.get("romanization")) or _clean(row.get("pronunciation"))
+                    entries.append(
+                        {
+                            "word": word,
+                            "pronunciation": pron or korean_romanization(word),
+                            "meaning": _clean(row.get("meaning")),
+                            "domain": _clean(row.get("domain")) or default_domain,
+                        }
+                    )
                 st.success(_save(language, entries))
 
 
 def render(language: str):
-    st.subheader("📥 Add Vocabulary")
+    st.subheader("📥 Add Words")
     flash = st.session_state.pop("ingestion_flash", None)
     if flash:
         st.success(flash)
