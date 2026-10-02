@@ -56,13 +56,19 @@ def render(language: str):
     m4.metric("📖 Total words", total_words)
 
     st.markdown("#### Cards Reviewed per Day (last 30 days)")
-    since = (today - timedelta(days=29)).isoformat()
-    daily_rows = get_daily_review_counts(language, since)
+    start = today - timedelta(days=29)
+    daily_rows = get_daily_review_counts(language, start.isoformat())
     if daily_rows:
-        df = pd.DataFrame(daily_rows)
-        df["study_date"] = pd.to_datetime(df["study_date"])
-        fig = px.line(df, x="study_date", y="cards_reviewed", markers=True)
-        fig.update_layout(xaxis_title="Date", yaxis_title="Cards Reviewed")
+        # Plot every day in the window, zero-filled. With only the days
+        # that have reviews, Plotly zooms one day's point down to a
+        # sub-second axis ("23:59:59.999") and gaps vanish from view.
+        counts = {r["study_date"]: r["cards_reviewed"] for r in daily_rows}
+        days = [start + timedelta(days=i) for i in range(30)]
+        df = pd.DataFrame({"date": days, "cards_reviewed": [counts.get(d.isoformat(), 0) for d in days]})
+        fig = px.bar(df, x="date", y="cards_reviewed")
+        fig.update_layout(xaxis_title=None, yaxis_title="Cards reviewed", margin=dict(t=10, b=10))
+        fig.update_xaxes(tickformat="%b %d", dtick=7 * 24 * 60 * 60 * 1000)  # a label each week
+        fig.update_yaxes(rangemode="tozero")
         st.plotly_chart(fig, width="stretch")
     else:
         st.info("No reviews logged yet — grade some cards in Study to see your trend here.")

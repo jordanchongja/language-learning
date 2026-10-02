@@ -108,8 +108,21 @@ active_env_label = st.sidebar.radio(
 st.session_state["language"] = config.LANGUAGES[active_env_label]
 
 st.sidebar.divider()
+st.sidebar.caption("☁️ Turso cloud database" if get_db().is_remote else "💾 Local database (data/language.db)")
+if _google_auth_configured():
+    st.sidebar.caption(f"Signed in as {st.user.email}")
+    st.sidebar.button("Sign out", on_click=st.logout)
 
-page = st.sidebar.radio("Navigate", options=list(PAGES), key="active_page")
+# ---------------------------------------------------------------------------
+# Main area — page tabs, then the active page
+# ---------------------------------------------------------------------------
+st.header(active_env_label, anchor=False)
+# Page navigation lives at the top of the page rather than in the
+# sidebar: on a phone the sidebar is a drawer that stays open over the
+# page after each choice, so switching pages would cost extra taps.
+page = st.radio(
+    "Page", options=list(PAGES), key="active_page", horizontal=True, label_visibility="collapsed"
+)
 
 # Coming back to Study should pick up words added since the queue was
 # last loaded, so drop the cached queue whenever the page changes.
@@ -117,15 +130,4 @@ if st.session_state.get("_prev_page") != page:
     st.session_state.pop("quiz_language", None)
 st.session_state["_prev_page"] = page
 
-st.sidebar.divider()
-st.sidebar.caption("☁️ Turso cloud database" if get_db().is_remote else f"💾 Local database: `{config.DB_PATH}`")
-if _google_auth_configured():
-    st.sidebar.caption(f"Signed in as {st.user.email}")
-    st.sidebar.button("Sign out", on_click=st.logout)
-
-# ---------------------------------------------------------------------------
-# Main area — route to the active page
-# ---------------------------------------------------------------------------
-language = st.session_state["language"]
-st.title(active_env_label)
-PAGES[page].render(language)
+PAGES[page].render(st.session_state["language"])

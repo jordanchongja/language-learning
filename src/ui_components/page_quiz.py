@@ -7,6 +7,7 @@ pronunciation audio on request, and grades the card via SM-2
 (Again/Hard/Good/Easy). Each grade is saved immediately, so the
 dashboard counts reviews even if you stop halfway.
 """
+import html
 import time
 
 import streamlit as st
@@ -25,6 +26,16 @@ from src.utils.time_utils import local_today
 # Cap on seconds counted for one card, so leaving the app open on a
 # card doesn't inflate the dashboard's study time.
 _MAX_SECONDS_PER_CARD = 300
+
+
+def _big_text(text: str, size: str, weight: int):
+    """Large card text. Markdown headings would add a link icon next to
+    the word and are sized for page titles, so use a plain styled div."""
+    st.markdown(
+        f'<div style="font-size:{size};font-weight:{weight};line-height:1.35;margin:0.2rem 0 0.6rem">'
+        f"{html.escape(text)}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _load_queue(language: str):
@@ -115,7 +126,7 @@ def render(language: str):
 
     if card["is_new"]:
         st.markdown("🆕 **New card**")
-    st.markdown(f"## {card['cloze_text'] or card['word']}")
+    _big_text(card["cloze_text"] or card["word"], "1.6rem", 700)
 
     if not st.session_state["quiz_show_answer"]:
         if st.button("Show Answer", type="primary", width="stretch"):
@@ -124,7 +135,8 @@ def render(language: str):
         _render_limit_setting(language)
         return
 
-    st.markdown(f"### {card['word']}")
+    st.divider()
+    _big_text(card["word"], "1.4rem", 600)
     if card["pronunciation"]:
         st.caption(card["pronunciation"])
     # Word meaning first (it reflects edits made on the Vocabulary page).
@@ -138,8 +150,16 @@ def render(language: str):
     else:
         st.caption("🔇 Audio unavailable (gTTS needs an internet connection).")
 
-    has_sentence = card["sentence_text"] and card["sentence_text"] != card["word"]
-    if has_sentence:
+    # Grade buttons sit right under the answer, in one row that doesn't
+    # stack on a phone, so grading never needs a scroll.
+    with st.container(horizontal=True, gap="small"):
+        for label in ("Again", "Hard", "Good", "Easy"):
+            if st.button(label, key=f"grade_{label}_{index}", width="stretch"):
+                _grade(card, label)
+                st.rerun()
+    st.caption("Again = forgot (see it again today) · Hard/Good/Easy = remembered, with growing gaps")
+
+    if card["sentence_text"] and card["sentence_text"] != card["word"]:
         st.markdown(f"**Sentence:** {card['sentence_text']}")
         if st.session_state["quiz_play_sentence"]:
             sentence_audio = generate_audio(card["sentence_text"], card["language"])
@@ -148,11 +168,3 @@ def render(language: str):
         elif st.button("🔊 Sentence audio"):
             st.session_state["quiz_play_sentence"] = True
             st.rerun()
-
-    st.write("How well did you know this?")
-    cols = st.columns(4)
-    for col, label in zip(cols, ("Again", "Hard", "Good", "Easy")):
-        if col.button(label, key=f"grade_{label}_{index}", width="stretch"):
-            _grade(card, label)
-            st.rerun()
-    st.caption("Again = forgot (see it again today) · Hard/Good/Easy = remembered, with growing gaps")

@@ -59,7 +59,7 @@ def _save(language: str, entries: list, source_text: str = "") -> str:
 
 
 def _render_chinese(language: str):
-    st.subheader("🇨🇳 Paste Chinese Text")
+    st.subheader("📰 Paste Chinese Text")
     st.caption(
         "Paste an article or passage. It's split into words so you can pick which to learn — "
         "each saved word gets a fill-in-the-blank card built from its sentence in this text."

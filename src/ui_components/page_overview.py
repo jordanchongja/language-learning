@@ -59,7 +59,8 @@ words, weeks or months later for ones you know well.
    **Add Words**.
 3. Glance at **Dashboard** now and then to keep your streak going.
 
-Pick the language in the **sidebar** (☰ on a phone) — every page only shows that language.
+Switch pages with the tabs at the top. Pick the language in the **sidebar** (» at the top left on a
+phone), or use the buttons under **Today** — every page only shows the selected language.
 
 ---
 
